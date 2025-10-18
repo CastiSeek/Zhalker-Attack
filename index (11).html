@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, orientation=portrait">
+<title>Башня и помощники</title>
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --panel: rgba(30, 30, 30, 0.8);
+    --accent: #00ff88;
+    --danger: #ff4c4c;
+    --text: #fff;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", sans-serif;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 70vh;
+    background: #1a1a1a;
+    border-radius: 20px;
+    border: 2px solid #333;
+    touch-action: none;
+  }
+
+  #ui {
+    position: absolute;
+    top: 5%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    padding: 10px 15px;
+    border-radius: 15px;
+    text-align: center;
+    width: 90%;
+    box-shadow: 0 0 15px rgba(0,0,0,0.6);
+  }
+
+  #ui div {
+    margin: 5px 0;
+    font-size: 18px;
+  }
+
+  button {
+    background: var(--accent);
+    border: none;
+    border-radius: 10px;
+    padding: 10px 15px;
+    color: #000;
+    font-weight: bold;
+    font-size: 16px;
+    margin-top: 8px;
+    width: 100%;
+    cursor: pointer;
+    transition: 0.2s;
+  }
+
+  button:active {
+    transform: scale(0.95);
+    background: #00cc6e;
+  }
+
+  #joystick {
+    position: absolute;
+    bottom: 5%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 120px;
+    background: rgba(50, 50, 50, 0.5);
+    border-radius: 50%;
+    touch-action: none;
+  }
+
+  #joystickInner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 60px;
+    height: 60px;
+    background: var(--accent);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="ui">
+  <div>❤️ Башня: <span id="towerHealth">100</span></div>
+  <div>💰 Монеты: <span id="coins">0</span></div>
+  <div>⚔️ Волна: <span id="wave">1</span></div>
+  <button id="upgradeBtn" onclick="upgradeTower()" style="display:none;">Улучшить башню (30)</button>
+  <button onclick="buyHelper()">Нанять помощника (100)</button>
+</div>
+
+<div id="joystick">
+  <div id="joystickInner"></div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const upgradeBtn = document.getElementById('upgradeBtn');
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight * 0.7;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+let tower = { x: canvas.width/2 - 25, y: canvas.height - 60, width: 50, height: 50, health: 100, damage: 10, level: 1 };
+let coins = 0;
+let wave = 1;
+
+let bullets = [];
+let enemies = [];
+let helpers = [];
+
+let joystick = { active: false, startX: 0, startY: 0, x: 0, y: 0, dx: 0 };
+
+// === Управление джойстиком ===
+const joystickOuter = document.getElementById('joystick');
+const joystickInner = document.getElementById('joystickInner');
+
+joystickOuter.addEventListener('touchstart', e => {
+  const touch = e.touches[0];
+  joystick.active = true;
+  joystick.startX = touch.clientX;
+  joystick.startY = touch.clientY;
+});
+
+joystickOuter.addEventListener('touchmove', e => {
+  if (!joystick.active) return;
+  const touch = e.touches[0];
+  const dx = touch.clientX - joystick.startX;
+  const dy = touch.clientY - joystick.startY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const maxDist = 40;
+  const angle = Math.atan2(dy, dx);
+  const limitedDist = Math.min(dist, maxDist);
+  joystick.x = Math.cos(angle) * limitedDist;
+  joystick.y = Math.sin(angle) * limitedDist;
+  joystickInner.style.transform = `translate(${joystick.x}px, ${joystick.y}px)`;
+  joystick.dx = joystick.x / maxDist;
+});
+
+joystickOuter.addEventListener('touchend', () => {
+  joystick.active = false;
+  joystickInner.style.transform = 'translate(-50%, -50%)';
+  joystick.dx = 0;
+});
+
+// === Враги и стрельба ===
+function spawnEnemy() {
+  const x = Math.random() * (canvas.width - 30);
+  const health = 20 + wave * 5;
+  enemies.push({ x, y: 0, width: 30, height: 30, health });
+}
+
+function shoot(x, y, damage) {
+  bullets.push({ x: tower.x + tower.width/2, y: tower.y, targetX: x, targetY: y, speed: 7, damage });
+}
+
+// === Улучшение башни (каждые 5 волн) ===
+function checkUpgradeAvailability() {
+  if (wave % 5 === 0) upgradeBtn.style.display = 'block';
+  else upgradeBtn.style.display = 'none';
+}
+
+function upgradeTower() {
+  if (coins >= 30) {
+    coins -= 30;
+    tower.level++;
+    tower.damage += 6;
+    tower.health += 30;
+    updateUI();
+    upgradeBtn.style.display = 'none';
+  } else {
+    flashUI("Не хватает монет!");
+  }
+}
+
+function buyHelper() {
+  if (coins >= 100) {
+    coins -= 100;
+    helpers.push({ x: 40 + helpers.length*50, y: canvas.height - 80, damage: 5, level: 1 });
+    updateUI();
+  } else {
+    flashUI("Не хватает монет!");
+  }
+}
+
+function moveTower(dx) {
+  tower.x += dx;
+  if (tower.x < 0) tower.x = 0;
+  if (tower.x + tower.width > canvas.width) tower.x = canvas.width - tower.width;
+}
+
+function updateUI() {
+  document.getElementById('coins').innerText = coins;
+  document.getElementById('towerHealth').innerText = tower.health;
+  document.getElementById('wave').innerText = wave;
+}
+
+function flashUI(text) {
+  const msg = document.createElement('div');
+  msg.textContent = text;
+  msg.style.position = 'absolute';
+  msg.style.top = '50%';
+  msg.style.left = '50%';
+  msg.style.transform = 'translate(-50%, -50%)';
+  msg.style.background = 'rgba(0,0,0,0.8)';
+  msg.style.padding = '15px 25px';
+  msg.style.borderRadius = '10px';
+  msg.style.fontSize = '20px';
+  msg.style.color = '#fff';
+  msg.style.zIndex = '999';
+  msg.style.animation = 'fade 1.5s ease forwards';
+  document.body.appendChild(msg);
+  setTimeout(()=>msg.remove(),1500);
+}
+
+canvas.addEventListener('touchstart', e => {
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  shoot(touch.clientX - rect.left, touch.clientY - rect.top, tower.damage);
+});
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  shoot(e.clientX - rect.left, e.clientY - rect.top, tower.damage);
+});
+
+function helpersShoot() {
+  helpers.forEach(helper => {
+    const target = enemies[0];
+    if(target){
+      bullets.push({ x: helper.x + 15, y: helper.y, targetX: target.x, targetY: target.y, speed: 6, damage: helper.damage });
+    }
+  });
+}
+
+function update() {
+  moveTower(joystick.dx * 8);
+
+  bullets.forEach((b, i) => {
+    const dx = b.targetX - b.x;
+    const dy = b.targetY - b.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist < b.speed) bullets.splice(i,1);
+    else {
+      b.x += dx/dist * b.speed;
+      b.y += dy/dist * b.speed;
+    }
+  });
+
+  enemies.forEach((enemy, i) => {
+    enemy.y += 1 + wave * 0.15;
+    if(enemy.y + enemy.height > tower.y){
+      tower.health -= 10;
+      enemies.splice(i,1);
+      updateUI();
+    }
+  });
+
+  bullets.forEach((b, bi) => {
+    enemies.forEach((e, ei) => {
+      if(b.x > e.x && b.x < e.x + e.width && b.y > e.y && b.y < e.y + e.height){
+        e.health -= b.damage;
+        bullets.splice(bi,1);
+        if(e.health <= 0){
+          enemies.splice(ei,1);
+          coins += 10;
+          updateUI();
+        }
+      }
+    });
+  });
+
+  if(enemies.length === 0){
+    wave++;
+    for(let i=0; i<wave+2; i++) spawnEnemy();
+    checkUpgradeAvailability();
+    updateUI();
+  }
+
+  helpersShoot();
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle = '#00ff88';
+  ctx.fillRect(tower.x, tower.y, tower.width, tower.height);
+
+  ctx.fillStyle = '#00aaff';
+  helpers.forEach(h => ctx.fillRect(h.x, h.y, 30, 30));
+
+  ctx.fillStyle = '#ffff00';
+  bullets.forEach(b => ctx.fillRect(b.x-5, b.y-5, 10, 10));
+
+  ctx.fillStyle = '#ff3333';
+  enemies.forEach(e => {
+    ctx.fillRect(e.x, e.y, e.width, e.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(e.health, e.x+5, e.y-5);
+    ctx.fillStyle = '#ff3333';
+  });
+}
+
+function gameLoop() {
+  update();
+  draw();
+  if(tower.health > 0) requestAnimationFrame(gameLoop);
+  else flashUI("Башня разрушена! 💥");
+}
+
+// Запуск
+for(let i=0; i<3; i++) spawnEnemy();
+gameLoop();
+checkUpgradeAvailability();
+</script>
+
+<style>
+@keyframes fade {
+  0% {opacity:0; transform:translate(-50%, -50%) scale(0.9);}
+  20% {opacity:1; transform:translate(-50%, -50%) scale(1);}
+  80% {opacity:1;}
+  100% {opacity:0; transform:translate(-50%, -50%) scale(0.9);}
+}
+</style>
+
+</body>
+</html>
